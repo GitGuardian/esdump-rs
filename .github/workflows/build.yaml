@@ -1,10 +1,13 @@
-name: test suite
-on: [push, pull_request]
+name: build release
+on: [push]
 
 jobs:
-  test:
+  build-release:
+    strategy:
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
     name: cargo build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
