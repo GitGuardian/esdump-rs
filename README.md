@@ -5,7 +5,7 @@ Dump Elasticsearch or OpenSearch  indexes to blob storage, really-really fast :r
 Features:
 - Super-dooper fast
 - Compression with gzip or JSON
-- Comes as a single, small static binary
+- Comes as a single, small static binary or a Docker image
 - Natively supports blob storage on AWS, Google Cloud and Azure
 - Detailed progress output and logging
 - Written in Rust :crab:
