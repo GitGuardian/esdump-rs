@@ -16,7 +16,7 @@ jobs:
             bin: esdump-rs.exe
             target: x86_64-pc-windows-msvc
     name: cargo build
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -29,6 +29,6 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}
+          name: ${{ matrix.os }}
           path: ${{ matrix.target }}
           retention-days: 1
