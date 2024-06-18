@@ -37,9 +37,8 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
 
-      - run: |
-          cp target/${{ matrix.target }}/release-lto/${{ matrix.bin }} ${{ matrix.bin }}
-           
+      - run: cp target/${{ matrix.target }}/release-lto/${{ matrix.bin }} ${{ matrix.bin }}
+      - run: | 
           if [[ "${{ matrix.os }}" == "windows-latest" ]]
           then
           7z a ${{ matrix.target}}.${{ matrix.suffix }} ${{ matrix.bin }} 
