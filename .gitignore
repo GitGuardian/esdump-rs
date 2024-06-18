@@ -1,6 +1,5 @@
 /target
 .env
-*.parquet
 .idea/
 temp/
 .task/

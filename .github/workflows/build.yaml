@@ -15,3 +15,9 @@ jobs:
         with:
           key: "release-lto"
       - run: cargo build --profile=release-lto
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: target/release-lto/esdump-rs*
+          retention-days: 1
