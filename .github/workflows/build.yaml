@@ -15,7 +15,7 @@ jobs:
         with:
           key: "release-lto"
       - run: cargo build --profile=release-lto
-      - name: Archive code coverage results
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
