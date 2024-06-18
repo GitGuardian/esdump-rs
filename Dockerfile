@@ -1,4 +1,4 @@
-FROM rust:1-buster AS builder
+FROM --platform=$BUILDPLATFORM rust:1-buster AS builder
 
 RUN apt-get update && apt-get install cmake -y
 
@@ -8,8 +8,9 @@ COPY . .
 
 RUN cargo install --locked --path=.
 
+FROM --platform=$BUILDPLATFORM debian:buster
 
-FROM debian:buster-slim
+RUN apt-get update && apt-get install openssl -y && apt-get clean
 
 COPY --from=builder /usr/local/cargo/bin/esdump-rs /usr/local/bin/esdump-rs
 
