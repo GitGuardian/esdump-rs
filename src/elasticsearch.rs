@@ -39,7 +39,7 @@ pub struct ClusterInfo {
 
 #[derive(Deserialize, Debug)]
 pub struct ClusterVersion {
-    pub distribution: ElasticDistribution,
+    pub distribution: Option<ElasticDistribution>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -121,7 +121,7 @@ impl ElasticsearchClient {
                     "Distribution detected: {:?}",
                     cluster_info.version.distribution
                 );
-                cluster_info.version.distribution
+                cluster_info.version.distribution.unwrap_or(ElasticDistribution::Elasticsearch)
             }
         };
 
