@@ -1,0 +1,36 @@
+services:
+  elasticsearch:
+    image: "bitnami/elasticsearch:latest"
+    env_file:
+      - test.env
+    environment:
+      - ELASTICSEARCH_SKIP_TRANSPORT_TLS=true
+      - ELASTICSEARCH_ENABLE_REST_TLS=false
+    volumes:
+      - ./volumes/elasticsearch/:/bitnami/elasticsearch
+    ports:
+      - 9201:9200
+
+  opensearch:
+    image: "bitnami/opensearch:latest"
+    env_file:
+      - test.env
+    environment:
+      - OPENSEARCH_SKIP_TRANSPORT_TLS=true
+      - OPENSEARCH_ENABLE_REST_TLS=false
+    volumes:
+      - ./volumes/opensearch/:/bitnami/opensearch
+    ports:
+      - 9202:9200
+
+  minio:
+    image: "bitnami/minio:latest"
+    env_file:
+      - test.env
+    environment:
+      - MINIO_DATA_DIR=/export/
+    volumes:
+      - ./volumes/minio:/export/
+    ports:
+      - '9000:9000'
+      - '9001:9001'

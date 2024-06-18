@@ -1,0 +1,21 @@
+[package]
+name = "seed-es-data"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+elasticsearch = "8.5.0-alpha.1"
+clap = { version = "4.5.3", features = ["derive"] }
+url = "2.5.1"
+tokio = { version = "*", features = ["full"] }
+serde = "1.0.203"
+serde_json = "1.0.117"
+dotenv = "0.15.0"
+anyhow = "1.0.86"
+uuid = {version = "1.8.0", features = ["v7", "serde"]}
+indicatif = "0.17.8"
+futures-util = "0.3.30"
+byte-unit = { version = "5.1.4", features = ["serde"] }
+random-string = "1.0"
+human_bytes = {version = "0.4.3", default-features = false}
+itertools = "0.13.0"

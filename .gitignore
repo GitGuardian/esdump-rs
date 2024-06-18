@@ -1,0 +1,9 @@
+/target
+.env
+*.parquet
+.idea/
+temp/
+.task/
+volumes/minio/
+volumes/opensearch/
+volumes/elasticsearch/
