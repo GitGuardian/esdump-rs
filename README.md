@@ -4,11 +4,12 @@ Dump Elasticsearch or OpenSearch  indexes to blob storage, really-really fast :r
 
 Features:
 - Super-dooper fast
-- Compression with ZStd or Gzip
-- Comes as a single, small static binary or a Docker image
+- Supports compressing output with zstd or gzip
 - Natively supports blob storage on AWS, Google Cloud and Azure
 - Supports filtering and selecting specific fields
 - Detailed progress output and logging
+- Comes as a single, small static binary or a Docker image
+- Runs on Windows, Linux or MacOS
 - Written in Rust :crab:
 
 ![](./images/readme.gif)
