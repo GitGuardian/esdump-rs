@@ -35,6 +35,9 @@ log = "0.4.21"
 byte-unit = { version = "5.1.4", features = ["serde"] }
 clap-num = "1.1.1"
 
+[profile.test]
+opt-level = 1
+
 [profile.release-lto]
 inherits = "release"
 lto = true

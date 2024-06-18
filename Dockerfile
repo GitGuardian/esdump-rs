@@ -1,5 +1,7 @@
 FROM rust:1-buster AS builder
 
+RUN apt-get update && apt-get install cmake -y
+
 WORKDIR /usr/src/
 
 COPY . .
