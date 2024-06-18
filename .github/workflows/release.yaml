@@ -25,6 +25,11 @@ jobs:
     name: cargo build
     runs-on: ${{ matrix.os }}
 
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -38,6 +43,11 @@ jobs:
           RUSTC_WRAPPER: "sccache"
 
       - run: cp target/${{ matrix.target }}/release/${{ matrix.bin }} ${{ matrix.bin }}
+
+      - name: Attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: '${{ github.workspace }}/${{ matrix.bin }}'
 
       - if: matrix.os == 'windows-latest'
         run: | 
