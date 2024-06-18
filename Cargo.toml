@@ -8,6 +8,10 @@ name = "esdump-rs"
 version = "0.1.0"
 edition = "2021"
 
+description = "Dump Elasticsearch indexes to object storage"
+license = "MIT"
+repository = "https://github.com/GitGuardian/esdump-rs/"
+
 [dependencies]
 elasticsearch = "8.5.0-alpha.1"
 serde = { version = "~1", features = ["derive"] }
