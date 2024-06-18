@@ -18,7 +18,7 @@ Features:
 
 **Releases:** Grab a pre-built executable [from the releases page](https://github.com/GitGuardian/esdump-rs/releases)
 
-**Docker:** `docker run ghcr.io/gitguardian/esdump-rs:v0.1.0`
+**Docker:** `docker run ghcr.io/gitguardian/esdump-rs:latest`
 
 ## Usage
 
