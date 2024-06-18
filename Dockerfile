@@ -4,7 +4,7 @@ WORKDIR /usr/src/
 
 COPY . .
 
-RUN cargo install --locked
+RUN cargo install --locked --path=.
 
 
 FROM debian:bookworm-slim
