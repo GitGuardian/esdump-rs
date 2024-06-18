@@ -34,6 +34,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Only cache the cargo registry
+          cache-targets: false
+
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
 
