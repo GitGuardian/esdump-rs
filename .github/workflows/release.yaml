@@ -2,19 +2,22 @@ name: build release
 on: [push]
 
 jobs:
-  build-release:
+  build_release:
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             bin: esdump-rs
             target: x86_64-unknown-linux-gnu
+            suffix: tar.gz
           - os: macOS-latest
             bin: esdump-rs
-            target: aarch64-apple-darwin
+            target: aarch64-apple-darwin.tar
+            suffix: tar.gz
           - os: windows-latest
             bin: esdump-rs.exe
             target: x86_64-pc-windows-msvc
+            suffix: zip
     name: cargo build
     runs-on: ${{ matrix.os }}
     steps:
@@ -25,10 +28,31 @@ jobs:
           key: "release-lto"
       - run: cargo build --target=${{ matrix.target }} --profile=release-lto
       - run: mkdir ${{ matrix.target }}
-      - run: cp target/${{ matrix.target }}/release-lto/${{ matrix.bin }} ${{ matrix.target }}/${{ matrix.bin }}
+      - run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]
+          then
+          7z a ${{ matrix.target}}.${{ matrix.suffix }} target/${{ matrix.target }}/release-lto/${{ matrix.bin }}
+          else
+          tar czvf ${{ matrix.target}}.${{ matrix.suffix }} target/${{ matrix.target }}/release-lto/${{ matrix.bin }}
+          fi
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: ${{ matrix.target }}
+          name: ${{ matrix.target}}.${{ matrix.suffix }}
+          path: ${{ matrix.target}}.${{ matrix.suffix }}
           retention-days: 1
+#
+#  create_release:
+#    name: Release
+#    runs-on: ubuntu-latest
+#    needs:
+#      - build_release
+#    steps:
+#      - uses: actions/download-artifact@v4
+#      - name: Publish
+#        uses: softprops/action-gh-release@v1
+#        with:
+#          draft: false
+#          files: |
+#            **/*.tar.gz
+#            **/*.zip
