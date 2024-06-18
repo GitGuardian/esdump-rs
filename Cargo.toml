@@ -42,6 +42,3 @@ clap-num = "1.1.1"
 [profile.test]
 opt-level = 1
 
-[profile.release-lto]
-inherits = "release"
-lto = true

@@ -32,12 +32,12 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
 
-      - run: cargo build --target=${{ matrix.target }} --profile=release-lto
+      - run: cargo build --target=${{ matrix.target }} --release
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
 
-      - run: cp target/${{ matrix.target }}/release-lto/${{ matrix.bin }} ${{ matrix.bin }}
+      - run: cp target/${{ matrix.target }}/release/${{ matrix.bin }} ${{ matrix.bin }}
 
       - if: matrix.os == 'windows-latest'
         run: | 
