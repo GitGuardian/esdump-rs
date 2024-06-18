@@ -1,0 +1,12 @@
+name: test suite
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: cargo build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --profile=release-lto
