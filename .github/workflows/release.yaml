@@ -12,7 +12,7 @@ jobs:
             suffix: tar.gz
           - os: macOS-latest
             bin: esdump-rs
-            target: aarch64-apple-darwin.tar
+            target: aarch64-apple-darwin
             suffix: tar.gz
           - os: windows-latest
             bin: esdump-rs.exe
