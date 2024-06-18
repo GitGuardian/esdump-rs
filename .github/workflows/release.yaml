@@ -5,7 +5,16 @@ jobs:
   build-release:
     strategy:
       matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            bin: esdump-rs
+            target: x86_64-unknown-linux-gnu
+          - os: macOS-latest
+            bin: esdump-rs
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            bin: esdump-rs.exe
+            target: x86_64-pc-windows-msvc
     name: cargo build
     runs-on: ${{ matrix.platform }}
     steps:
@@ -14,10 +23,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: "release-lto"
-      - run: cargo build --profile=release-lto
+      - run: cargo build --target=${{ matrix.target }} --profile=release-lto
+      - run: mkdir ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release-lto/${{ matrix.bin }} ${{ matrix.target }}/${{ matrix.bin }}
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
-          path: target/release-lto/esdump-rs*
+          path: ${{ matrix.target }}
           retention-days: 1
