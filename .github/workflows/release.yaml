@@ -24,13 +24,19 @@ jobs:
             suffix: zip
     name: cargo build
     runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "release-lto"
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
       - run: cargo build --target=${{ matrix.target }} --profile=release-lto
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
+
       - run: |
           cp target/${{ matrix.target }}/release-lto/${{ matrix.bin }} ${{ matrix.bin }}
            
