@@ -31,7 +31,7 @@ futures-util = { version = "0.3.30", default-features = false, features = ["std"
 bytes = "1.6.1"
 flate2 = { version = "1.0.17", features = ["zlib-ng"], default-features = false }
 object_store = { version = "0.10.1", features = ["aws", "gcp", "azure"] }
-async-trait = "0.1.80"
+async-trait = "0.1.81"
 zstd = "0.13.2"
 human-duration = "0.1.0"
 bytesize = "1.3.0"
