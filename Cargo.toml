@@ -16,7 +16,7 @@ repository = "https://github.com/GitGuardian/esdump-rs/"
 elasticsearch = "8.5.0-alpha.1"
 serde = { version = "~1", features = ["derive"] }
 serde_json = { version = "~1", features = ["raw_value"] }
-tokio = { version = "1.38.0", features = ["full"] }
+tokio = { version = "1.38.1", features = ["full"] }
 url = "2.5.0"
 dotenv = "0.15.0"
 clap = { version = "4.5.3", features = ["derive"] }
