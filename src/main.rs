@@ -159,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let client = Rc::new(storage);
 
+    let index_name = args.index.clone();
     let es_client = Arc::new(
         ElasticsearchClient::new(
             args.elasticsearch_url,
@@ -198,6 +199,7 @@ async fn main() -> anyhow::Result<()> {
     // Paging is sequential by necessity: each page's cursor is the previous page's last sort
     // value, so a page cannot start before its predecessor has returned. Parallelism comes
     // from running one process per index, and from --concurrent-uploads within a file.
+    let run_start = Instant::now();
     let mut total_timings = BatchStats::default();
     let mut compressed_buffer = Vec::with_capacity(1024 * 1024 * 10);
     let mut search_after: Option<Vec<Value>> = None;
@@ -283,5 +285,25 @@ async fn main() -> anyhow::Result<()> {
     drop(header_span_enter);
     drop(header_span);
     info!("Completed! Total timings: {total_timings}");
+
+    // Machine-readable counterpart to the line above. The Display impl renders durations and
+    // sizes for humans ("443ms", "2.4 MB"), which callers cannot parse back reliably; this
+    // gives an orchestrator the raw numbers to report throughput from.
+    let elapsed = run_start.elapsed();
+    info!(
+        "summary: {}",
+        serde_json::json!({
+            "index": index_name,
+            "records": fetched,
+            "files": file_idx,
+            "elapsed_ms": elapsed.as_millis(),
+            "elasticsearch_bytes": total_timings.elasticsearch_bytes,
+            "compressed_bytes": total_timings.compressed_bytes,
+            "elasticsearch_ms": total_timings.elasticsearch.as_millis(),
+            "compression_ms": total_timings.compression.as_millis(),
+            "json_ms": total_timings.json.as_millis(),
+            "storage_ms": total_timings.storage.as_millis(),
+        })
+    );
     Ok(())
 }
