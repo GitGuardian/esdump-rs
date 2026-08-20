@@ -20,7 +20,7 @@ jobs:
           cache-targets: false
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - run: cargo check
         env:
