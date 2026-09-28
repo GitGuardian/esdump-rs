@@ -1,8 +1,8 @@
 mod compression;
 mod elasticsearch;
+mod paging;
 mod stats;
 mod storage;
-mod utils;
 
 use indicatif::ProgressStyle;
 use std::fs::File;
@@ -19,7 +19,6 @@ use tracing::{info, info_span, warn, Instrument};
 use crate::elasticsearch::{ElasticDistribution, ElasticsearchClient};
 use clap::Parser;
 use clap_num::number_range;
-use futures_util::StreamExt;
 use serde_json::{Map, Value};
 
 use tracing_indicatif::span_ext::IndicatifSpanExt;
@@ -55,9 +54,11 @@ struct Cli {
     #[arg(short, long)]
     index: String,
 
-    /// Number of concurrent requests to use
+    /// Retained for compatibility. Paging is sequential within an index (each page's
+    /// cursor comes from the previous page), so this no longer controls request
+    /// concurrency; use --concurrent-uploads to bound in-flight uploads.
     #[arg(short, long)]
-    concurrency: NonZeroUsize,
+    concurrency: Option<NonZeroUsize>,
 
     /// Limit the total number of records returned
     #[arg(short, long)]
@@ -146,11 +147,10 @@ async fn main() -> anyhow::Result<()> {
         "Dumping index {} {} to {}",
         args.index, args.elasticsearch_url, args.output_location
     );
-    info!(
-        "Using {:?} concurrent uploads, with {} concurrent fetchers",
-        args.concurrent_uploads,
-        args.concurrency.get()
-    );
+    info!("Using {:?} concurrent uploads", args.concurrent_uploads);
+    if args.concurrency.is_some() {
+        warn!("--concurrency is ignored: paging within an index is sequential by construction");
+    }
     info!("Using query {}", serde_json::to_string_pretty(&query)?);
     let storage = StorageBackend::from_url(
         &args.output_location,
@@ -159,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let client = Rc::new(storage);
 
+    let index_name = args.index.clone();
     let es_client = Arc::new(
         ElasticsearchClient::new(
             args.elasticsearch_url,
@@ -171,102 +172,138 @@ async fn main() -> anyhow::Result<()> {
         .context("Error creating ES client")?,
     );
 
-    let index_range = es_client
-        .get_index_document_range()
+    let document_count = es_client
+        .get_index_document_count()
         .await
-        .context("Error getting document index range")?;
-    let task_range = match args.limit {
-        None => index_range,
-        Some(limit) => 0..index_range.end.min(limit.get()),
+        .context("Error getting document count")?;
+    let target_count = match args.limit {
+        None => document_count,
+        Some(limit) => document_count.min(limit.get()),
     };
-    let split_ranges = utils::split_range(task_range, args.batch_size);
-    let batches: Vec<_> = split_ranges
-        .chunks(args.batches_per_file as usize)
-        .collect();
+    let pages_per_file = args.batches_per_file as usize;
     info!(
-        "Got {batch_count} batches to process in {chunk_count} chunks",
-        batch_count = split_ranges.len(),
-        chunk_count = batches.len()
+        "Got {target_count} records to fetch in pages of {batch_size}, {pages_per_file} pages per file",
+        target_count = target_count,
+        batch_size = args.batch_size,
+        pages_per_file = pages_per_file,
     );
 
     let header_span = info_span!("fetch_batches");
     header_span.pb_set_style(&ProgressStyle::with_template(
         "[{elapsed} {percent}%] {wide_bar} {pos}/{len} [ETA {eta}]",
     )?);
-    header_span.pb_set_length(split_ranges.len() as u64);
+    header_span.pb_set_length(target_count as u64);
 
     let header_span_enter = header_span.enter();
 
-    let futures = batches.into_iter().enumerate().map(|(idx, ranges)| {
-        let es_client = es_client.clone();
+    // Paging is sequential by necessity: each page's cursor is the previous page's last sort
+    // value, so a page cannot start before its predecessor has returned. Parallelism comes
+    // from running one process per index, and from --concurrent-uploads within a file.
+    let run_start = Instant::now();
+    let mut total_timings = BatchStats::default();
+    let mut compressed_buffer = Vec::with_capacity(1024 * 1024 * 10);
+    let mut search_after: Option<Vec<Value>> = None;
+    let mut fetched: u32 = 0;
+    let mut file_idx: usize = 0;
+    let mut exhausted = false;
 
-        let parent_span = tracing::Span::current();
-        let range_count = ranges.len();
-        let min_row = ranges[0].start;
-        let max_row = ranges[range_count - 1].end;
-        let overall_range = min_row..max_row;
+    while !exhausted && fetched < target_count {
         let suffix = uuid::Uuid::new_v7(uuid::timestamp::Timestamp::now(uuid::NoContext));
-        let client = client.clone();
+        let upload_file_name = format!("{file_idx:0>5}-{suffix}.jsonl");
+        let (fs_url, mut upload) = client
+            .create_streaming_upload(&upload_file_name, args.compression)
+            .await
+            .with_context(|| {
+                format!("Error creating streaming upload for file {upload_file_name}")
+            })?;
+        let mut file_stats = BatchStats::default();
 
-        async move {
-            let upload_file_name = format!("{idx:0>5}-{suffix}.jsonl");
-            let (fs_url, mut upload) = client
-                .create_streaming_upload(&upload_file_name, args.compression)
-                .await.with_context(|| format!("Error creating streaming upload for file {upload_file_name}"))?;
-            let mut compressed_buffer = Vec::with_capacity(1024 * 1024 * 10);
-            let mut total_batch_stats = BatchStats::default();
-
-            for (range_idx, range) in ranges.iter().enumerate() {
-                let storage_time = Instant::now();
-                client.wait_for_capacity(&mut upload).await?;
-                total_batch_stats.storage += storage_time.elapsed();
-
-                let batch_idx = range_idx + 1;
-                let (batch_stats, mut batch_compressed_buffer) = es_client
-                    .fetch_single_batch(range, args.compression, compressed_buffer)
-                    .instrument(info_span!("fetch_batch",
-                        batch = batch_idx,
-                        batches=range_count,
-                        ids=?overall_range,
-                        chunk=idx,
-                    ))
-                    .await.with_context(|| format!("Error uploading batch {batch_idx} for chunk {idx} to file {upload_file_name}"))?;
-
-                // Add metrics to the total stats
-                total_batch_stats += batch_stats;
-
-                // Write the contents to the storage backend. Should be quick, but it may copy the
-                // buffer, and so it's good to time.
-                let buffers_time = Instant::now();
-
-                upload.write(&batch_compressed_buffer);
-                // Clear the buffer, removing all values, ready for the next iteration
-                batch_compressed_buffer.clear();
-                // Reset compressed_buffer for the next iteration
-                compressed_buffer = batch_compressed_buffer;
-
-                total_batch_stats.buffers += buffers_time.elapsed();
-
-                parent_span.pb_inc(1);
-            }
+        for page_idx in 0..pages_per_file {
+            let size = paging::page_size(args.batch_size, fetched, target_count);
 
             let storage_time = Instant::now();
-            upload.finish().await.with_context(|| format!("Error finishing streaming upload for file {upload_file_name}"))?;
-            total_batch_stats.storage += storage_time.elapsed();
+            client.wait_for_capacity(&mut upload).await?;
+            file_stats.storage += storage_time.elapsed();
 
-            Ok::<_, anyhow::Error>((idx, total_batch_stats, fs_url))
+            let page = es_client
+                .fetch_page(
+                    search_after.as_ref(),
+                    size,
+                    args.compression,
+                    compressed_buffer,
+                )
+                .instrument(info_span!("fetch_page",
+                    page = page_idx + 1,
+                    pages = pages_per_file,
+                    fetched = fetched,
+                    file = file_idx,
+                ))
+                .await
+                .with_context(|| {
+                    format!("Error fetching page {page_idx} for file {upload_file_name}")
+                })?;
+
+            let mut page_buffer = page.buffer;
+            file_stats += page.stats;
+            fetched += page.hits as u32;
+
+            let buffers_time = Instant::now();
+            upload.write(&page_buffer);
+            // Clear the buffer, removing all values, ready for the next iteration
+            page_buffer.clear();
+            compressed_buffer = page_buffer;
+            file_stats.buffers += buffers_time.elapsed();
+
+            header_span.pb_inc(page.hits as u64);
+
+            match paging::next_cursor(page.hits, size, page.last_sort) {
+                Some(cursor) => search_after = Some(cursor),
+                None => {
+                    exhausted = true;
+                    break;
+                }
+            }
+
+            if fetched >= target_count {
+                break;
+            }
         }
-    });
 
-    let mut total_timings = BatchStats::default();
-    let mut stream = futures_util::stream::iter(futures).buffer_unordered(args.concurrency.get());
-    while let Some(result) = stream.next().await {
-        let (chunk, timings, url) = result?;
-        info!("Chunk {chunk} uploaded to {url}. Timings: {timings}");
-        total_timings += timings;
+        let storage_time = Instant::now();
+        upload.finish().await.with_context(|| {
+            format!("Error finishing streaming upload for file {upload_file_name}")
+        })?;
+        file_stats.storage += storage_time.elapsed();
+
+        info!("File {file_idx} uploaded to {fs_url}. Timings: {file_stats}");
+        total_timings += file_stats;
+        file_idx += 1;
     }
+
+    info!("Fetched {fetched} records into {file_idx} files");
+
     drop(header_span_enter);
     drop(header_span);
     info!("Completed! Total timings: {total_timings}");
+
+    // Machine-readable counterpart to the line above. The Display impl renders durations and
+    // sizes for humans ("443ms", "2.4 MB"), which callers cannot parse back reliably; this
+    // gives an orchestrator the raw numbers to report throughput from.
+    let elapsed = run_start.elapsed();
+    info!(
+        "summary: {}",
+        serde_json::json!({
+            "index": index_name,
+            "records": fetched,
+            "files": file_idx,
+            "elapsed_ms": elapsed.as_millis(),
+            "elasticsearch_bytes": total_timings.elasticsearch_bytes,
+            "compressed_bytes": total_timings.compressed_bytes,
+            "elasticsearch_ms": total_timings.elasticsearch.as_millis(),
+            "compression_ms": total_timings.compression.as_millis(),
+            "json_ms": total_timings.json.as_millis(),
+            "storage_ms": total_timings.storage.as_millis(),
+        })
+    );
     Ok(())
 }

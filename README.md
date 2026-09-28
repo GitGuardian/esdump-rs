@@ -29,14 +29,18 @@ Pass the Elasticsearch or OpenSearch HTTP(s) URL and a blob storage URL. Set the
 $ esdump-rs http://localhost:9200 s3://es-dump/test/ \
   --index=test-index \
   --batches-per-file=5 \
-  --batch-size=5000 \
-  --concurrency=10
+  --batch-size=5000
 ```
 
-Settings such as the batch size and concurrency can be set as flags
+Records are walked with `search_after` over `_shard_doc` inside a point-in-time, resuming each
+page from the previous page's sort values. That makes the dump exact on indices holding
+tombstoned documents — anything that has seen deletes or updates — at the cost of paging a
+single index sequentially. Run one process per index to go wider.
+
+Settings such as the batch size can be set as flags
 
 ```shell
-Usage: esdump-rs [OPTIONS] --index <INDEX> --concurrency <CONCURRENCY> --batch-size <BATCH_SIZE> --batches-per-file <BATCHES_PER_FILE> <ELASTICSEARCH_URL> <OUTPUT_LOCATION>
+Usage: esdump-rs [OPTIONS] --index <INDEX> --batch-size <BATCH_SIZE> --batches-per-file <BATCHES_PER_FILE> <ELASTICSEARCH_URL> <OUTPUT_LOCATION>
 
 Arguments:
   <ELASTICSEARCH_URL>  Elasticsearch cluster to dump
@@ -46,7 +50,7 @@ Options:
   -i, --index <INDEX>
           Index to dump
   -c, --concurrency <CONCURRENCY>
-          Number of concurrent requests to use
+          Retained for compatibility and ignored; paging within an index is sequential
   -l, --limit <LIMIT>
           Limit the total number of records returned
   -b, --batch-size <BATCH_SIZE>
@@ -54,7 +58,8 @@ Options:
       --batches-per-file <BATCHES_PER_FILE>
           Number of batches to write per file
   -q, --query <QUERY>
-          A file path containing a query to execute while dumping
+          A file path containing a query to execute while dumping. Its `query` clause filters
+          the dump and the record count
   -f, --field <FIELD>
           Specific fields to fetch
       --compression <COMPRESSION>

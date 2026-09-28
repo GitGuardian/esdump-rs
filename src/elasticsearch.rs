@@ -13,7 +13,6 @@ use crate::compression::Compression;
 use anyhow::{bail, Context};
 use elasticsearch::http::headers::HeaderMap;
 use elasticsearch::http::Method;
-use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use serde_json::value::RawValue;
@@ -59,6 +58,22 @@ pub struct SearchResult<'a> {
 #[derive(Deserialize, Debug)]
 pub struct IndexCountResponse {
     pub count: u32,
+}
+
+/// The only part of a hit we need to interpret: its `sort` values, which become the
+/// `search_after` cursor for the next page. Everything else is written out verbatim.
+#[derive(Deserialize, Debug)]
+struct HitSort {
+    sort: Vec<Value>,
+}
+
+/// One page of results: the compressed bytes, how many hits it held, and the cursor to
+/// resume from. `last_sort` is `None` only when the page was empty.
+pub struct Page {
+    pub stats: BatchStats,
+    pub buffer: Vec<u8>,
+    pub hits: usize,
+    pub last_sort: Option<Vec<Value>>,
 }
 
 #[derive(Serialize)]
@@ -174,16 +189,21 @@ impl ElasticsearchClient {
         })
     }
 
-    pub async fn get_index_document_range(&self) -> anyhow::Result<Range<u32>> {
-        let resp = self
-            .client
-            .count(CountParts::Index(&[&self.index]))
-            .send()
-            .await?;
+    /// Live document count for the index, honouring the `--query` filter when one is set.
+    ///
+    /// Paging is driven by the cursor, not by this number; it sizes the progress bar and
+    /// bounds `--limit`.
+    pub async fn get_index_document_count(&self) -> anyhow::Result<u32> {
+        // Bound separately so the slice outlives the request builder.
+        let parts = [self.index.as_str()];
+        let request = self.client.count(CountParts::Index(&parts));
+        let resp = match self.query.get("query") {
+            Some(filter) => request.body(json!({"query": filter})).send().await?,
+            None => request.send().await?,
+        };
         let count_response: IndexCountResponse = resp.json().await?;
         info!("Counted {count} records", count = count_response.count);
-        let document_range: Range<u32> = 0..count_response.count;
-        Ok(document_range)
+        Ok(count_response.count)
     }
 
     async fn update_point_in_time(&self, new_point_in_time: PointInTimeID) {
@@ -192,20 +212,35 @@ impl ElasticsearchClient {
         *locked = new_point_in_time;
     }
 
+    /// Fetch one page, resuming after `search_after` (the `sort` values of the previous
+    /// page's last hit, or `None` for the first page).
+    ///
+    /// The cursor is always a sort value Elasticsearch itself produced. It deliberately is
+    /// *not* a document ordinal: sorting is by `_shard_doc`, whose values are internal
+    /// Lucene document ids and therefore have gaps wherever a document was tombstoned by a
+    /// delete or an update. Deriving a cursor from a document count instead of carrying the
+    /// real sort value makes every page after the first start too early — duplicating rows
+    /// at the front and never reaching the tail. On an index with a fraction `d` of deleted
+    /// documents that silently drops about `d` of it.
     #[instrument(skip_all, level = "debug")]
-    pub async fn fetch_single_batch(
+    pub async fn fetch_page(
         &self,
-        id_range: &Range<u32>,
+        search_after: Option<&Vec<Value>>,
+        size: u16,
         compression: Compression,
         output_buffer: Vec<u8>,
-    ) -> anyhow::Result<(BatchStats, Vec<u8>)> {
-        let start_idx: u32 = id_range.start - 1;
-
+    ) -> anyhow::Result<Page> {
         let mut query = self.query.clone();
-        query.insert("search_after".to_string(), json!([start_idx]));
-        query.insert("query".to_string(), json!({"match_all": {}}));
+        match search_after {
+            Some(cursor) => {
+                query.insert("search_after".to_string(), json!(cursor));
+            }
+            // First page: no cursor. Any `search_after` carried in via --query would be a
+            // caller-supplied starting point, so it is left untouched.
+            None => {}
+        }
 
-        debug!("ID Range: {:?}, Query: {:?}", id_range, query);
+        debug!("Search after: {:?}, Query: {:?}", search_after, query);
 
         let es_start_time = Instant::now();
 
@@ -230,9 +265,12 @@ impl ElasticsearchClient {
                     // https://www.elastic.co/guide/en/elasticsearch/reference/current/sql-rest-format.html
                     // .header(ACCEPT, HeaderValue::from_static("application/json"))
                     .track_scores(false)
-                    .size(id_range.len() as i64)
+                    .size(size as i64)
                     .allow_partial_search_results(false)
-                    .sort(&["_doc"])
+                    // `_shard_doc` is the cheap total order Elasticsearch provides for
+                    // point-in-time paging: unique across shards and stable for the life of
+                    // the PIT. Plain `_doc` is only unique within a shard.
+                    .sort(&["_shard_doc"])
                     .body(&query)
                     .send()
                     .await;
@@ -246,9 +284,9 @@ impl ElasticsearchClient {
                             return Err(e.into());
                         }
                         error!(
-                            "Attempt {attempt} for {id_range:?} failed",
+                            "Attempt {attempt} for page after {search_after:?} failed",
                             attempt = attempt,
-                            id_range = id_range
+                            search_after = search_after
                         );
                         // Backoff for 1 second. Not great, not bad.
                         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -261,7 +299,7 @@ impl ElasticsearchClient {
         let elasticsearch_time = es_start_time.elapsed();
         let response_bytes = response_body.as_bytes().len() as u64;
 
-        let (mut stats, compressed_bytes, new_point_in_time) = self
+        let (mut stats, buffer, new_point_in_time, hits, last_sort) = self
             .compress_batch(compression, response_body, output_buffer)
             .await
             .context("Error compressing")?;
@@ -273,7 +311,12 @@ impl ElasticsearchClient {
         stats.elasticsearch = elasticsearch_time;
         stats.elasticsearch_bytes = response_bytes;
 
-        Ok((stats, compressed_bytes))
+        Ok(Page {
+            stats,
+            buffer,
+            hits,
+            last_sort,
+        })
     }
 
     #[instrument(skip_all, level = "debug")]
@@ -282,7 +325,7 @@ impl ElasticsearchClient {
         compression: Compression,
         buffer: String,
         output_buffer: Vec<u8>,
-    ) -> anyhow::Result<(BatchStats, Vec<u8>, PointInTimeID)> {
+    ) -> anyhow::Result<(BatchStats, Vec<u8>, PointInTimeID, usize, Option<Vec<Value>>)> {
         let result = tokio::task::spawn_blocking(move || {
             let json_parse_start = Instant::now();
             let results: SearchResult = serde_json::from_str(&buffer).with_context(|| {
@@ -294,9 +337,19 @@ impl ElasticsearchClient {
             })?;
             let json_duration = json_parse_start.elapsed();
 
+            let hit_count = results.hits.hits.len();
+            let last_sort = match results.hits.hits.last() {
+                None => None,
+                Some(last) => Some(
+                    serde_json::from_str::<HitSort>(last.get())
+                        .context("Hit is missing its `sort` values")?
+                        .sort,
+                ),
+            };
+
             let compression_start = Instant::now();
             let mut encoder = compression.get_encoder(output_buffer);
-            for hit in results.hits.hits {
+            for hit in &results.hits.hits {
                 encoder.write_all(hit.get().as_bytes())?;
                 encoder.write_all(&[b'\n'])?;
             }
@@ -310,7 +363,7 @@ impl ElasticsearchClient {
                 ..Default::default()
             };
 
-            Ok::<_, anyhow::Error>((stats, compressed_bytes, results.pit_id))
+            Ok::<_, anyhow::Error>((stats, compressed_bytes, results.pit_id, hit_count, last_sort))
         })
         .await??;
         Ok(result)
